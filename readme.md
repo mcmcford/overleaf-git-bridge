@@ -18,27 +18,34 @@ Running `sync.py` can:
 
 - ping MongoDB and confirm the configured database is readable
 - validate GitLab authentication and remote reachability before a push
+- scan lightweight project metadata first and only fully re-export projects whose sync state changed
 - write one folder per project under the configured export directory
 - save a curated `project.json` manifest for each project
+- reconstruct document sources from the `docs` collection into the exported project tree
+- resolve uploaded `fileRefs` from Mongo history blobs, a local Overleaf filestore, or S3 when configured
 - optionally save the full raw MongoDB document with `--include-raw`
 - stage only the exported directory, create a commit, and push it to GitLab
 
 Example output:
 
 ```text
-export/
+gitlab-export/
   my-paper-693616a50fa89c23ae8b1e99/
+    main.tex
+    chapters/
+      intro.tex
+    assets/
+      diagram.pdf
     project.json
     project.raw.json
+  .sync-state.json
 ```
 
 ## What It Does Not Do Yet
 
 These are the next likely milestones:
 
-- resolve document trees into actual `.tex`, `.bib`, image, and support files
 - locate where Overleaf CE stores file contents in your deployment
-- fetch blob data from S3 if your installation offloads storage there
 - detect deleted exported project folders and prune them during sync
 - package the sync process into a container for Kubernetes
 
@@ -58,10 +65,37 @@ pip install -r requirements.txt
 
 Copy `.env.example` into `.env` and fill in the values you need.
 
+When using `--push`, do not point `GIT_REPO_DIR` at the same git repository that contains this tool's source code. Use a separate directory such as `gitlab-export`.
+
 MongoDB authentication can be configured in one of two ways:
 
 - set `OVERLEAF_MONGO_URI` with embedded credentials
 - or leave `OVERLEAF_MONGO_URI` empty and set `OVERLEAF_MONGO_HOST`, `OVERLEAF_MONGO_PORT`, `OVERLEAF_MONGO_USERNAME`, `OVERLEAF_MONGO_PASSWORD`, and `OVERLEAF_MONGO_AUTH_DB`
+
+Uploaded asset export supports three storage modes:
+
+- `OVERLEAF_ASSET_STORE=auto`: try Mongo history blobs first, then the local filestore path, then S3 if configured
+- `OVERLEAF_ASSET_STORE=filesystem`: only try `OVERLEAF_FILESTORE_ROOT`
+- `OVERLEAF_ASSET_STORE=s3`: only try S3
+
+Useful asset settings:
+
+- `OVERLEAF_FILESTORE_ROOT`: path to the Overleaf filestore on disk if uploads are stored locally
+- `OVERLEAF_ASSET_PATH_TEMPLATES`: optional semicolon-separated lookup templates such as `{hash};{hash_prefix2}/{hash};{project_id}/{file_id}`
+- `OVERLEAF_S3_BUCKET`: S3 bucket for uploaded assets, or a semicolon-separated list of buckets to try in order
+- `OVERLEAF_S3_PREFIX`: optional prefix within the S3 bucket
+- `OVERLEAF_S3_REGION`: optional AWS region
+- `OVERLEAF_S3_ENDPOINT_URL`: optional custom endpoint for S3-compatible storage
+- `OVERLEAF_S3_ACCESS_KEY_ID` and `OVERLEAF_S3_SECRET_ACCESS_KEY`: optional explicit S3 credentials
+- `OVERLEAF_S3_CA_BUNDLE`: optional CA bundle path for private/internal S3 TLS
+- `OVERLEAF_S3_VERIFY_SSL`: set to `false` only if you must temporarily bypass TLS verification for an internal endpoint
+
+Incremental sync state:
+
+- by default the exporter writes `.sync-state.json` in the configured output directory
+- the state file stores the last seen lightweight project metadata so unchanged projects can be skipped on the next run
+- if export-affecting settings change, the exporter automatically refreshes matching projects instead of trusting the old state
+- you can override the state file location with `--state-file` or `SYNC_STATE_FILE`
 
 GitLab push settings support two authentication styles:
 
@@ -74,7 +108,7 @@ For a project access token:
 - `GITLAB_ACCESS_TOKEN`: project access token with `write_repository`
 - `GITLAB_HTTP_USERNAME`: the generated project access token bot username
 - `GITLAB_BRANCH`: target branch, typically `main`
-- `GIT_REPO_DIR`: local checkout that will hold the export and git metadata
+- `GIT_REPO_DIR`: separate local checkout or empty directory that will hold the export and git metadata
 
 For a personal access token:
 
@@ -82,7 +116,7 @@ For a personal access token:
 - `GITLAB_ACCESS_TOKEN`: personal access token with `read_repository` for `--check-git` and `write_repository` for pushes
 - `GITLAB_HTTP_USERNAME`: `oauth2`
 - `GITLAB_BRANCH`: target branch, typically `main`
-- `GIT_REPO_DIR`: local checkout that will hold the export and git metadata
+- `GIT_REPO_DIR`: separate local checkout or empty directory that will hold the export and git metadata
 
 For a deploy token:
 
@@ -90,14 +124,14 @@ For a deploy token:
 - `GITLAB_ACCESS_TOKEN`: deploy token secret
 - `GITLAB_HTTP_USERNAME`: the deploy token username
 - `GITLAB_BRANCH`: target branch, typically `main`
-- `GIT_REPO_DIR`: local checkout that will hold the export and git metadata
+- `GIT_REPO_DIR`: separate local checkout or empty directory that will hold the export and git metadata
 
 For an SSH deploy key:
 
 - `GITLAB_REMOTE_URL`: SSH remote such as `git@gitlab.example.com:group/overleaf-export.git`
 - `GITLAB_SSH_KEY_PATH`: absolute path to the private deploy key
 - `GITLAB_BRANCH`: target branch, typically `main`
-- `GIT_REPO_DIR`: local checkout that will hold the export and git metadata
+- `GIT_REPO_DIR`: separate local checkout or empty directory that will hold the export and git metadata
 
 ### 3. Confirm MongoDB connectivity
 
@@ -116,6 +150,8 @@ A successful check reports:
 ```powershell
 python sync.py --limit 5 --include-raw
 ```
+
+After the first run, later runs reuse the sync state file and usually only re-export projects whose `lastUpdated`, `version`, name, or trash state changed.
 
 ### 5. Confirm GitLab connectivity
 
@@ -152,7 +188,8 @@ python sync.py [--mongo-uri URI] [--mongo-host HOST] [--mongo-port PORT]
                [--mongo-username USER] [--mongo-password PASSWORD]
                [--mongo-auth-db DB] [--mongo-auth-mechanism NAME] [--mongo-tls]
                [--connect-timeout-ms MS] [--db-name NAME] [--output-dir DIR]
-               [--project-id ID ...] [--limit N] [--include-raw] [--dry-run]
+               [--state-file PATH] [--project-id ID ...] [--limit N]
+               [--include-raw] [--dry-run]
                [--check-connection] [--check-git] [--push] [--git-repo-dir DIR]
                [--git-remote-name NAME] [--git-remote-url URL]
                [--git-branch BRANCH] [--git-ssh-key-path PATH]
@@ -192,5 +229,9 @@ Once the metadata export looks correct, the next high-value step is to inspect h
 - The default database name is `sharelatex`, which is common in Overleaf CE deployments, but your environment may differ.
 - `project.json` is intentionally a curated snapshot so diffs stay readable in git.
 - `project.raw.json` is meant for reverse engineering and may be noisy.
+- `.sync-state.json` is an implementation detail for incremental sync; keep it with the export if you want future runs to stay fast.
+- Text documents referenced from `rootFolder.docs` are exported as regular files.
+- Uploaded `fileRefs` are exported when their bytes can be resolved from Mongo history blobs, a configured filestore path, or configured S3 storage.
+- If uploaded assets cannot be resolved, the exporter prints a warning so you know additional storage configuration is needed.
 - Project access tokens need the `write_repository` scope for `--push` to succeed.
 - Deploy keys must be granted write access in GitLab for SSH-based `--push` to succeed.

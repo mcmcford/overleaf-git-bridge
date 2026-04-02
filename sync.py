@@ -65,6 +65,8 @@ class ExportStats:
 
 @dataclass(frozen=True)
 class ProjectCommitChange:
+    """Describe one project's exported filesystem changes and resulting sync state."""
+
     project_id: str
     project_name: str
     user_id: str | None
@@ -75,6 +77,8 @@ class ProjectCommitChange:
 
 @dataclass
 class ExportResult:
+    """Capture export statistics, per-project commit data, and final sync state."""
+
     stats: ExportStats
     project_changes: list[ProjectCommitChange]
     state_file: Path
@@ -104,7 +108,11 @@ class GitCheckResult:
 
 
 class DateTimeEncoder(json.JSONEncoder):
+    """JSON encoder that converts datetime-like Mongo values into strings."""
+
     def default(self, obj: Any) -> Any:
+        """Serialize datetimes and ObjectIds into JSON-friendly string values."""
+
         if isinstance(obj, datetime):
             return obj.isoformat()
         if isinstance(obj, ObjectId):
@@ -540,6 +548,8 @@ def build_project_state_record(
     resolved_editor_id: str | None = None,
     resolved_editor_name: str | None = None,
 ) -> dict[str, Any]:
+    """Build the sync-state record persisted for a single exported project."""
+
     record = {
         "project_name": project.project_name,
         "folder_name": project.folder_name,
@@ -556,6 +566,8 @@ def build_project_state_record(
 def build_project_state_signature(
     record: dict[str, Any] | None,
 ) -> dict[str, Any] | None:
+    """Extract the subset of state fields that determine whether a project changed."""
+
     if not isinstance(record, dict):
         return None
     return {
@@ -599,6 +611,8 @@ def build_user_display_name(user: dict[str, Any] | None) -> str:
 
 
 def coerce_mongo_id(value: Any) -> str | ObjectId:
+    """Convert valid ObjectId strings into ObjectId instances for Mongo queries."""
+
     if isinstance(value, ObjectId):
         return value
     if isinstance(value, str) and ObjectId.is_valid(value):
@@ -633,6 +647,8 @@ def resolve_project_user_identity(
     project: dict[str, Any],
     users_by_id: dict[str, dict[str, Any]],
 ) -> tuple[str | None, str]:
+    """Resolve the most relevant user attached to a project for commit attribution."""
+
     for field_name in ("lastUpdatedBy", "owner_ref"):
         raw_user_id = project.get(field_name)
         if not raw_user_id:
@@ -645,6 +661,8 @@ def resolve_project_user_identity(
 def resolve_saved_project_user_identity(
     record: dict[str, Any],
 ) -> tuple[str | None, str]:
+    """Read the stored editor identity back out of a saved sync-state record."""
+
     if not isinstance(record, dict):
         return None, "unknown user"
     return (
@@ -654,10 +672,14 @@ def resolve_saved_project_user_identity(
 
 
 def clone_sync_state(sync_state: dict[str, Any]) -> dict[str, Any]:
+    """Return a deep copy of sync state so mutations do not leak across snapshots."""
+
     return copy.deepcopy(sync_state)
 
 
 def build_sync_config_fingerprint(args: argparse.Namespace) -> str:
+    """Hash export-affecting settings so config changes can trigger a refresh."""
+
     payload = {
         "format_version": SYNC_STATE_FORMAT_VERSION,
         "include_raw": bool(args.include_raw),
@@ -678,6 +700,8 @@ def build_sync_config_fingerprint(args: argparse.Namespace) -> str:
 
 
 def load_sync_state(path: Path) -> dict[str, Any]:
+    """Load the incremental sync-state file, falling back to an empty default state."""
+
     default_state = {
         "format_version": SYNC_STATE_FORMAT_VERSION,
         "config_fingerprint": "",
@@ -707,6 +731,8 @@ def load_sync_state(path: Path) -> dict[str, Any]:
 
 
 def dedupe_paths(paths: list[Path]) -> list[Path]:
+    """Preserve path order while removing duplicate filesystem targets."""
+
     seen: set[str] = set()
     unique_paths: list[Path] = []
     for path in paths:
@@ -719,6 +745,11 @@ def dedupe_paths(paths: list[Path]) -> list[Path]:
 
 
 def remove_path(path: Path, dry_run: bool) -> bool:
+    """
+    Remove a file or directory at the given path if it exists.
+    If dry_run is true, just return whether the path exists without actually removing it.
+    """
+
     if not path.exists():
         return False
     if dry_run:
@@ -731,12 +762,23 @@ def remove_path(path: Path, dry_run: bool) -> bool:
 
 
 def prepare_target_dir(path: Path, dry_run: bool) -> None:
+    """
+    Prepare the target directory by removing it if it exists (via remove_path) and then creating it.
+    """
+
     remove_path(path, dry_run)
     if not dry_run:
         path.mkdir(parents=True, exist_ok=True)
 
 
 def write_text(path: Path, content: str, dry_run: bool) -> bool:
+    """
+    Write the given text content to the specified path, but only if the content has changed from what's already on disk.
+
+    Return false if the file already exists with the same content,
+    true if the file was changed or created.
+    """
+
     if path.exists() and path.read_text(encoding="utf-8") == content:
         return False
     if dry_run:
@@ -747,6 +789,14 @@ def write_text(path: Path, content: str, dry_run: bool) -> bool:
 
 
 def write_bytes(path: Path, content: bytes, dry_run: bool) -> bool:
+    """
+    Write the given binary content to the specified path, but only if the content has changed from what's already on disk.
+    Very similar to write_text but for bytes, and without encoding considerations.
+
+    Return false if the file already exists with the same content,
+    true if the file was changed or created.
+    """
+
     if path.exists() and path.read_bytes() == content:
         return False
     if dry_run:
@@ -757,6 +807,13 @@ def write_bytes(path: Path, content: bytes, dry_run: bool) -> bool:
 
 
 def write_json(path: Path, payload: dict[str, Any] | list[Any], dry_run: bool) -> bool:
+    """
+    Write the given JSON payload to the specified path, but only if the content has changed from what's already on disk.
+
+    Return false if the file already exists with the same content,
+    true if the file was changed or created.
+    """
+
     normalized_payload = normalize_document(payload)
     content = (
         json.dumps(normalized_payload, indent=2, sort_keys=True, cls=DateTimeEncoder)
@@ -775,6 +832,15 @@ def iter_project_doc_refs(
     folders: list[dict[str, Any]],
     parent_parts: tuple[str, ...] = (),
 ):
+    """
+    For all the folders and subfolders in the given list, yield tuples of (folder_parts, doc_name, doc_id)
+    for each document reference found, where:
+
+    - folder_parts is a tuple of folder names leading to the document, excluding "rootFolder"
+    - doc_name is the name of the document
+    - doc_id is the unique identifier of the document
+    """
+
     for folder in folders:
         folder_name = folder.get("name")
         folder_parts = parent_parts
@@ -796,6 +862,12 @@ def iter_project_file_refs(
     folders: list[dict[str, Any]],
     parent_parts: tuple[str, ...] = (),
 ):
+    """
+    For all the folders and subfolders in the given list, yield AssetLocator objects for each file
+    reference found, where the relative_path is constructed from the folder hierarchy and file name,
+    and the file_id, file_name, and file_hash are taken from the file reference.
+    """
+
     for folder in folders:
         folder_name = folder.get("name")
         folder_parts = parent_parts
@@ -819,6 +891,13 @@ def iter_project_file_refs(
 
 
 def render_doc_content(lines: list[str]) -> str:
+    """
+    Render the content of a document from its list of lines by stripping trailing newlines from each line and joining them with a single newline character,
+    and ensuring the final content ends with a newline if there are any lines at all.
+
+    return the rendered document content as a single string, or an empty string if there are no lines.
+    """
+
     if not lines:
         return ""
     return "\n".join(line.rstrip("\n") for line in lines) + "\n"
@@ -828,6 +907,11 @@ def fetch_project_docs(
     database: Any,
     root_folders: list[dict[str, Any]],
 ) -> dict[str, tuple[Path, str]]:
+    """
+    Given a list of root folders from a project document, fetch the content of all referenced documents from the database
+    and return a mapping of relative file path to a tuple of (relative_path, rendered_content),
+    """
+
     doc_refs = list(iter_project_doc_refs(root_folders))
     if not doc_refs:
         return {}
@@ -857,6 +941,11 @@ def export_project_sources(
     target_dir: Path,
     dry_run: bool,
 ) -> bool:
+    """
+    For a given project document, fetch the content of all its referenced documents and write them to the target directory,
+    preserving the folder structure and only writing files that have changed from what's already on disk (via write_text).
+    """
+
     changed = False
     for relative_path, content in fetch_project_docs(
         database, project.get("rootFolder", [])
@@ -866,6 +955,8 @@ def export_project_sources(
 
 
 def build_asset_context(project_id: str, locator: AssetLocator) -> dict[str, str]:
+    """Prepare template variables used to resolve an uploaded asset's storage path."""
+
     file_hash = locator.file_hash or ""
     return {
         "project_id": project_id,
@@ -879,6 +970,8 @@ def build_asset_context(project_id: str, locator: AssetLocator) -> dict[str, str
 
 
 def build_asset_templates() -> list[str]:
+    """Return asset path templates from the environment or the built-in defaults."""
+
     templates = env_list("OVERLEAF_ASSET_PATH_TEMPLATES")
     if templates:
         return templates
@@ -886,6 +979,8 @@ def build_asset_templates() -> list[str]:
 
 
 def build_s3_buckets(args: argparse.Namespace) -> list[str]:
+    """Split the configured S3 bucket list into trimmed bucket names."""
+
     if not args.s3_bucket:
         return []
     return [
@@ -894,6 +989,8 @@ def build_s3_buckets(args: argparse.Namespace) -> list[str]:
 
 
 def extract_hash_from_s3_key(key: str) -> str | None:
+    """Infer a 40-character asset hash from the trailing path segments of an S3 key."""
+
     parts = key.split("/")
     if len(parts) < 2:
         return None
@@ -913,6 +1010,8 @@ def build_s3_hash_index(
     client: Any,
     bucket: str,
 ) -> dict[str, str]:
+    """Index bucket objects by inferred asset hash for fallback S3 lookups."""
+
     paginator = client.get_paginator("list_objects_v2")
     index: dict[str, str] = {}
     for page in paginator.paginate(Bucket=bucket):
@@ -927,6 +1026,8 @@ def build_s3_hash_index(
 
 
 def render_asset_template(template: str, context: dict[str, str]) -> str:
+    """Render a storage path template and suppress missing-placeholder failures."""
+
     try:
         return template.format(**context).strip("/\\")
     except KeyError:
@@ -934,6 +1035,8 @@ def render_asset_template(template: str, context: dict[str, str]) -> str:
 
 
 def resolve_asset_from_mongo(database: Any, asset_hash: str | None) -> bytes | None:
+    """Load an uploaded asset payload from MongoDB history blobs by content hash."""
+
     if not asset_hash:
         return None
 
@@ -958,6 +1061,8 @@ def resolve_asset_from_filestore(
     args: argparse.Namespace,
     context: dict[str, str],
 ) -> bytes | None:
+    """Load an uploaded asset from the local Overleaf filestore if configured."""
+
     if not args.filestore_root:
         return None
 
@@ -973,6 +1078,8 @@ def resolve_asset_from_filestore(
 
 
 def create_s3_client(args: argparse.Namespace):
+    """Create an S3 client configured for the export settings and TLS options."""
+
     try:
         import boto3  # type: ignore[import-not-found]
     except ImportError as exc:
@@ -1002,6 +1109,8 @@ def resolve_asset_from_s3(
     context: dict[str, str],
     state: dict[str, Any],
 ) -> bytes | None:
+    """Fetch an uploaded asset from S3 using template paths and hash-based fallback lookup."""
+
     buckets = build_s3_buckets(args)
     if not buckets:
         return None
@@ -1054,6 +1163,8 @@ def resolve_asset_bytes(
     locator: AssetLocator,
     state: dict[str, Any],
 ) -> bytes | None:
+    """Resolve uploaded asset bytes from the configured backing store sequence."""
+
     context = build_asset_context(project_id, locator)
     stores = {
         "mongo": ["mongo"],
@@ -1082,6 +1193,8 @@ def export_project_assets(
     dry_run: bool,
     state: dict[str, Any],
 ) -> tuple[bool, list[dict[str, Any]]]:
+    """Export uploaded assets for a project and report any unresolved file references."""
+
     changed = False
     unresolved_assets: list[dict[str, Any]] = []
     project_id = str(project["_id"])
@@ -1103,6 +1216,8 @@ def export_project_assets(
 
 
 def parse_project_ids(values: list[str]) -> list[str | ObjectId]:
+    """Parse project id filters into Mongo-ready string or ObjectId values."""
+
     parsed: list[str | ObjectId] = []
     for value in values:
         parsed.append(ObjectId(value) if ObjectId.is_valid(value) else value)
@@ -1110,6 +1225,8 @@ def parse_project_ids(values: list[str]) -> list[str | ObjectId]:
 
 
 def build_mongo_uri(args: argparse.Namespace) -> str:
+    """Construct a MongoDB connection URI from CLI and environment settings."""
+
     if args.mongo_uri:
         return args.mongo_uri
 
@@ -1137,6 +1254,8 @@ def build_mongo_uri(args: argparse.Namespace) -> str:
 
 
 def create_mongo_client(args: argparse.Namespace) -> MongoClient:
+    """Create a MongoClient using the resolved URI and timeout settings."""
+
     return MongoClient(
         build_mongo_uri(args),
         serverSelectionTimeoutMS=args.connect_timeout_ms,
@@ -1144,6 +1263,8 @@ def create_mongo_client(args: argparse.Namespace) -> MongoClient:
 
 
 def check_connection(args: argparse.Namespace) -> ConnectionCheckResult:
+    """Ping MongoDB and return basic database details for a connectivity check."""
+
     client = create_mongo_client(args)
     try:
         database = client[args.db_name]
@@ -1165,6 +1286,8 @@ def check_connection(args: argparse.Namespace) -> ConnectionCheckResult:
 
 
 def build_projects_query(args: argparse.Namespace) -> dict[str, Any]:
+    """Build the MongoDB query used to limit the project export scope."""
+
     query: dict[str, Any] = {}
     if args.project_id:
         query["_id"] = {"$in": parse_project_ids(args.project_id)}
@@ -1176,6 +1299,8 @@ def build_projects_cursor(
     args: argparse.Namespace,
     projection: dict[str, Any] | None = None,
 ):
+    """Return the projects cursor sorted by most recently updated first."""
+
     cursor = database.projects.find(build_projects_query(args), projection).sort(
         "lastUpdated", -1
     )
@@ -1188,6 +1313,8 @@ def collect_project_metadata(
     database: Any,
     args: argparse.Namespace,
 ) -> list[ProjectSyncInfo]:
+    """Fetch lightweight project metadata used to compute the sync plan."""
+
     try:
         cursor = build_projects_cursor(
             database,
@@ -1211,6 +1338,8 @@ def fetch_projects_by_ids(
     database: Any,
     project_ids: list[str],
 ) -> list[dict[str, Any]]:
+    """Load full project documents and preserve the caller's requested id order."""
+
     if not project_ids:
         return []
 
@@ -1232,10 +1361,14 @@ def fetch_projects_by_ids(
 
 
 def is_partial_sync(args: argparse.Namespace) -> bool:
+    """Return whether the current run targets only a subset of projects."""
+
     return bool(args.project_id) or bool(args.limit)
 
 
 def resolve_state_file_path(args: argparse.Namespace, output_dir: Path) -> Path:
+    """Resolve the state file path relative to the chosen output directory."""
+
     state_file = Path(args.state_file)
     if state_file.is_absolute():
         return state_file
@@ -1249,6 +1382,8 @@ def build_sync_plan(
     sync_state: dict[str, Any],
     config_fingerprint: str,
 ) -> SyncPlan:
+    """Compute which projects must be exported, removed, or left untouched."""
+
     existing_projects = sync_state.get("projects")
     if not isinstance(existing_projects, dict):
         existing_projects = {}
@@ -1333,6 +1468,8 @@ def build_sync_plan(
 
 
 def iter_projects(args: argparse.Namespace):
+    """Yield project documents from MongoDB while managing the client lifecycle."""
+
     client = create_mongo_client(args)
     database = client[args.db_name]
 
@@ -1346,10 +1483,14 @@ def iter_projects(args: argparse.Namespace):
 
 
 def resolve_git_repo_dir(args: argparse.Namespace) -> Path:
+    """Resolve the configured git working tree path to an absolute directory."""
+
     return Path(args.git_repo_dir).resolve()
 
 
 def resolve_output_dir(args: argparse.Namespace) -> Path:
+    """Resolve the export output directory relative to the git repo when needed."""
+
     output_dir = Path(args.output_dir)
     if output_dir.is_absolute():
         return output_dir
@@ -1357,6 +1498,8 @@ def resolve_output_dir(args: argparse.Namespace) -> Path:
 
 
 def ensure_safe_push_target(repo_dir: Path) -> None:
+    """Block pushes that would target the source repository containing this script."""
+
     script_repo_dir = Path(__file__).resolve().parent
     if repo_dir.resolve() == script_repo_dir:
         raise SystemExit(
@@ -1367,6 +1510,8 @@ def ensure_safe_push_target(repo_dir: Path) -> None:
 
 
 def export_projects(args: argparse.Namespace, output_dir: Path) -> ExportResult:
+    """Export changed projects, remove stale ones, and update incremental sync state."""
+
     stats = ExportStats()
     client = create_mongo_client(args)
     database = client[args.db_name]
@@ -1553,6 +1698,8 @@ def export_projects(args: argparse.Namespace, output_dir: Path) -> ExportResult:
 
 
 def resolve_git_remote_url(args: argparse.Namespace) -> str:
+    """Return the configured git remote URL or exit with a clear error."""
+
     if not args.git_remote_url:
         raise SystemExit(
             "Git remote URL is required. Provide --git-remote-url or set GITLAB_REMOTE_URL."
@@ -1561,6 +1708,8 @@ def resolve_git_remote_url(args: argparse.Namespace) -> str:
 
 
 def resolve_git_auth_mode(args: argparse.Namespace, remote_url: str) -> str:
+    """Validate git auth settings and report which authentication mode will be used."""
+
     if args.git_access_token:
         if not uses_http_remote(remote_url):
             raise SystemExit(
@@ -1586,6 +1735,8 @@ def run_git_external(
     cwd: Path | None = None,
     check: bool = True,
 ) -> subprocess.CompletedProcess[str]:
+    """Run a git command outside the export repo and optionally fail on non-zero exit."""
+
     result = subprocess.run(
         ["git", *git_args],
         cwd=cwd,
@@ -1603,6 +1754,8 @@ def run_git_external(
 
 
 def parse_ls_remote_head(stdout: str) -> str | None:
+    """Extract the symbolic HEAD reference from `git ls-remote --symref` output."""
+
     for line in stdout.splitlines():
         if line.startswith("ref: ") and line.endswith("\tHEAD"):
             return line.split("\t", 1)[0].replace("ref: ", "", 1)
@@ -1613,6 +1766,8 @@ def parse_ls_remote_head(stdout: str) -> str | None:
 
 
 def check_git_access(args: argparse.Namespace) -> GitCheckResult:
+    """Verify remote git access and report the detected HEAD reference."""
+
     remote_url = resolve_git_remote_url(args)
     auth_mode = resolve_git_auth_mode(args, remote_url)
     env = build_git_env(args)
@@ -1625,6 +1780,8 @@ def check_git_access(args: argparse.Namespace) -> GitCheckResult:
 
 
 def add_git_config_env(env: dict[str, str], key: str, value: str) -> None:
+    """Append an in-memory git config override via `GIT_CONFIG_COUNT` variables."""
+
     count = int(env.get("GIT_CONFIG_COUNT", "0"))
     env[f"GIT_CONFIG_KEY_{count}"] = key
     env[f"GIT_CONFIG_VALUE_{count}"] = value
@@ -1632,10 +1789,14 @@ def add_git_config_env(env: dict[str, str], key: str, value: str) -> None:
 
 
 def uses_http_remote(remote_url: str) -> bool:
+    """Return whether a git remote URL uses HTTP or HTTPS transport."""
+
     return remote_url.startswith(("https://", "http://"))
 
 
 def build_git_http_auth_header(args: argparse.Namespace) -> str:
+    """Build the HTTP Basic auth header Git uses for token-based pushes."""
+
     if not args.git_http_username.strip():
         raise SystemExit(
             "--git-http-username must be set when using --git-access-token. "
@@ -1649,6 +1810,8 @@ def build_git_http_auth_header(args: argparse.Namespace) -> str:
 
 
 def build_git_env(args: argparse.Namespace) -> dict[str, str]:
+    """Prepare a non-interactive git environment with author and auth settings."""
+
     env = os.environ.copy()
     env.update(
         {
@@ -1681,6 +1844,8 @@ def run_git(
     env: dict[str, str],
     check: bool = True,
 ) -> subprocess.CompletedProcess[str]:
+    """Run a git command inside the export repository and optionally enforce success."""
+
     result = subprocess.run(
         ["git", *git_args],
         cwd=repo_dir,
@@ -1698,6 +1863,8 @@ def run_git(
 
 
 def ensure_output_in_repo(repo_dir: Path, output_dir: Path) -> Path:
+    """Confirm the export output lives inside the git repo and return its relative path."""
+
     try:
         return output_dir.resolve().relative_to(repo_dir.resolve())
     except ValueError as exc:
@@ -1709,6 +1876,8 @@ def ensure_output_in_repo(repo_dir: Path, output_dir: Path) -> Path:
 def ensure_git_repo(
     args: argparse.Namespace, repo_dir: Path, env: dict[str, str]
 ) -> None:
+    """Initialize the export repo if needed and validate or add the configured remote."""
+
     repo_dir.mkdir(parents=True, exist_ok=True)
     if not (repo_dir / ".git").exists():
         run_git(repo_dir, ["init"], env)
@@ -1737,6 +1906,8 @@ def ensure_git_repo(
 
 
 def ensure_clean_git_worktree(repo_dir: Path, env: dict[str, str]) -> None:
+    """Require a clean git worktree before syncing from or pushing to the remote."""
+
     status = run_git(repo_dir, ["status", "--porcelain"], env)
     if status.stdout.strip():
         raise SystemExit(
@@ -1748,6 +1919,8 @@ def ensure_clean_git_worktree(repo_dir: Path, env: dict[str, str]) -> None:
 def sync_git_repo_before_export(
     args: argparse.Namespace, repo_dir: Path, env: dict[str, str]
 ) -> None:
+    """Fetch the remote and check out the target branch before exporting."""
+
     ensure_clean_git_worktree(repo_dir, env)
     run_git(repo_dir, ["fetch", args.git_remote_name], env)
 
@@ -1775,6 +1948,8 @@ def sync_git_repo_before_export(
 
 
 def prepare_git_repo_for_export(args: argparse.Namespace) -> None:
+    """Validate git settings and fast-forward or create the target export branch."""
+
     remote_url = resolve_git_remote_url(args)
     resolve_git_auth_mode(args, remote_url)
 
@@ -1786,6 +1961,8 @@ def prepare_git_repo_for_export(args: argparse.Namespace) -> None:
 
 
 def build_commit_message(stats: ExportStats) -> str:
+    """Generate the default summary commit message for a sync run."""
+
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
     return (
         f"Sync Overleaf export ({stats.changed} changed, {stats.scanned} scanned) "
@@ -1797,6 +1974,8 @@ def build_project_commit_message(
     change: ProjectCommitChange,
     base_message: str | None = None,
 ) -> str:
+    """Generate a per-project commit message, optionally prefixed by a custom base message."""
+
     user_name = normalize_user_name(change.user_name)
     if base_message:
         return f"{base_message}: {change.project_name} by {user_name}"
@@ -1808,6 +1987,8 @@ def stage_paths_for_commit(
     env: dict[str, str],
     paths: list[Path],
 ) -> list[str]:
+    """Stage the given paths and return their repo-relative, de-duplicated names."""
+
     relative_paths = [str(ensure_output_in_repo(repo_dir, path)) for path in paths]
     unique_relative_paths = list(dict.fromkeys(relative_paths))
     run_git(repo_dir, ["add", "--all", "--force", "--", *unique_relative_paths], env)
@@ -1819,6 +2000,8 @@ def has_staged_changes(
     env: dict[str, str],
     relative_paths: list[str],
 ) -> bool:
+    """Return whether the staged diff includes changes for the requested paths."""
+
     staged_diff = run_git(
         repo_dir,
         ["diff", "--cached", "--quiet", "--", *relative_paths],
@@ -1839,6 +2022,8 @@ def push_export_to_git(
     output_dir: Path,
     export_result: ExportResult | ExportStats,
 ) -> None:
+    """Commit exported changes and push them to the configured git remote."""
+
     remote_url = resolve_git_remote_url(args)
     resolve_git_auth_mode(args, remote_url)
 
@@ -1911,6 +2096,8 @@ def push_export_to_git(
 
 
 def main() -> int:
+    """Parse CLI arguments, run the requested sync action, and report the result."""
+
     args = build_parser().parse_args()
 
     if args.check_connection:

@@ -1,0 +1,6 @@
+apiVersion: v2
+name: overleaf-git-bridge
+description: Helm chart for running the Overleaf Git Bridge as a CronJob
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

@@ -1,0 +1,197 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "overleaf-git-bridge.fullname" . }}
+  labels:
+    {{- include "overleaf-git-bridge.labels" . | nindent 4 }}
+spec:
+  schedule: {{ .Values.schedule | quote }}
+  suspend: {{ .Values.suspend }}
+  concurrencyPolicy: {{ .Values.concurrencyPolicy }}
+  successfulJobsHistoryLimit: {{ .Values.successfulJobsHistoryLimit }}
+  failedJobsHistoryLimit: {{ .Values.failedJobsHistoryLimit }}
+  {{- with .Values.startingDeadlineSeconds }}
+  startingDeadlineSeconds: {{ . }}
+  {{- end }}
+  jobTemplate:
+    spec:
+      backoffLimit: {{ .Values.backoffLimit }}
+      {{- with .Values.ttlSecondsAfterFinished }}
+      ttlSecondsAfterFinished: {{ . }}
+      {{- end }}
+      template:
+        metadata:
+          labels:
+            {{- include "overleaf-git-bridge.selectorLabels" . | nindent 12 }}
+            {{- with .Values.podLabels }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          {{- with .Values.podAnnotations }}
+          annotations:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+        spec:
+          restartPolicy: OnFailure
+          {{- with .Values.imagePullSecrets }}
+          imagePullSecrets:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          securityContext:
+            {{- toYaml .Values.podSecurityContext | nindent 12 }}
+          containers:
+            - name: bridge
+              image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+              imagePullPolicy: {{ .Values.image.pullPolicy }}
+              securityContext:
+                {{- toYaml .Values.containerSecurityContext | nindent 16 }}
+              command:
+                - python
+                - /app/sync.py
+              {{- if or .Values.bridge.includeRaw .Values.bridge.dryRun (gt (len .Values.bridge.extraArgs) 0) }}
+              args:
+                {{- if .Values.bridge.includeRaw }}
+                - --include-raw
+                {{- end }}
+                {{- if .Values.bridge.dryRun }}
+                - --dry-run
+                {{- end }}
+                {{- range .Values.bridge.extraArgs }}
+                - {{ . | quote }}
+                {{- end }}
+              {{- end }}
+              env:
+                - name: OUTPUT_DIR
+                  value: {{ .Values.bridge.outputDir | quote }}
+                - name: SYNC_STATE_FILE
+                  value: {{ .Values.bridge.syncStateFile | quote }}
+                - name: OVERLEAF_ASSET_STORE
+                  value: {{ .Values.bridge.assetStore | quote }}
+                - name: OVERLEAF_MONGO_HOST
+                  value: {{ .Values.mongo.host | quote }}
+                - name: OVERLEAF_MONGO_PORT
+                  value: {{ .Values.mongo.port | quote }}
+                - name: OVERLEAF_MONGO_USERNAME
+                  value: {{ .Values.mongo.username | quote }}
+                - name: OVERLEAF_MONGO_AUTH_DB
+                  value: {{ .Values.mongo.authDb | quote }}
+                - name: OVERLEAF_MONGO_DB
+                  value: {{ .Values.mongo.dbName | quote }}
+                - name: OVERLEAF_MONGO_TLS
+                  value: {{ ternary "true" "false" .Values.mongo.tls | quote }}
+                - name: OVERLEAF_MONGO_CONNECT_TIMEOUT_MS
+                  value: {{ .Values.mongo.connectTimeoutMs | quote }}
+                - name: OVERLEAF_MONGO_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ .Values.mongo.existingPasswordSecret.name | quote }}
+                      key: {{ .Values.mongo.existingPasswordSecret.key | quote }}
+                {{- if .Values.bridge.filestoreRoot }}
+                - name: OVERLEAF_FILESTORE_ROOT
+                  value: {{ .Values.bridge.filestoreRoot | quote }}
+                {{- end }}
+                {{- if .Values.s3.enabled }}
+                - name: OVERLEAF_S3_BUCKET
+                  value: {{ .Values.s3.bucket | quote }}
+                - name: OVERLEAF_S3_PREFIX
+                  value: {{ .Values.s3.prefix | quote }}
+                - name: OVERLEAF_S3_REGION
+                  value: {{ .Values.s3.region | quote }}
+                - name: OVERLEAF_S3_ENDPOINT_URL
+                  value: {{ .Values.s3.endpointUrl | quote }}
+                - name: OVERLEAF_S3_VERIFY_SSL
+                  value: {{ ternary "true" "false" .Values.s3.verifySsl | quote }}
+                - name: OVERLEAF_S3_ACCESS_KEY_ID
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ .Values.s3.existingSecret.name | quote }}
+                      key: {{ .Values.s3.existingSecret.accessKeyIdKey | quote }}
+                - name: OVERLEAF_S3_SECRET_ACCESS_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ .Values.s3.existingSecret.name | quote }}
+                      key: {{ .Values.s3.existingSecret.secretAccessKeyKey | quote }}
+                {{- if .Values.s3.caBundle }}
+                - name: OVERLEAF_S3_CA_BUNDLE
+                  value: {{ .Values.s3.caBundle | quote }}
+                {{- end }}
+                {{- end }}
+                - name: GITLAB_PUSH
+                  value: {{ ternary "true" "false" .Values.git.push | quote }}
+                - name: GIT_REPO_DIR
+                  value: {{ .Values.git.repoDir | quote }}
+                - name: GIT_REMOTE_NAME
+                  value: {{ .Values.git.remoteName | quote }}
+                - name: GITLAB_REMOTE_URL
+                  value: {{ .Values.git.remoteUrl | quote }}
+                - name: GITLAB_BRANCH
+                  value: {{ .Values.git.branch | quote }}
+                - name: GITLAB_COMMIT_NAME
+                  value: {{ .Values.git.commitName | quote }}
+                - name: GITLAB_COMMIT_EMAIL
+                  value: {{ .Values.git.commitEmail | quote }}
+                {{- if .Values.git.commitMessage }}
+                - name: GITLAB_COMMIT_MESSAGE
+                  value: {{ .Values.git.commitMessage | quote }}
+                {{- end }}
+                {{- if eq .Values.git.auth.mode "token" }}
+                {{- if .Values.git.auth.existingSecret.name }}
+                - name: GITLAB_ACCESS_TOKEN
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ .Values.git.auth.existingSecret.name | quote }}
+                      key: {{ .Values.git.auth.existingSecret.tokenKey | quote }}
+                - name: GITLAB_HTTP_USERNAME
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ .Values.git.auth.existingSecret.name | quote }}
+                      key: {{ .Values.git.auth.existingSecret.usernameKey | quote }}
+                {{- end }}
+                {{- else if eq .Values.git.auth.mode "ssh" }}
+                - name: GITLAB_SSH_KEY_PATH
+                  value: {{ printf "%s/%s" .Values.git.auth.ssh.mountPath .Values.git.auth.ssh.existingSecret.key | quote }}
+                {{- end }}
+                {{- with .Values.extraEnv }}
+                {{- toYaml . | nindent 16 }}
+                {{- end }}
+              volumeMounts:
+                - name: bridge-data
+                  mountPath: {{ .Values.storage.mountPath | quote }}
+                {{- if and (eq .Values.git.auth.mode "ssh") .Values.git.auth.ssh.existingSecret.name }}
+                - name: gitlab-ssh-key
+                  mountPath: {{ .Values.git.auth.ssh.mountPath | quote }}
+                  readOnly: true
+                {{- end }}
+                {{- with .Values.extraVolumeMounts }}
+                {{- toYaml . | nindent 16 }}
+                {{- end }}
+              resources:
+                {{- toYaml .Values.resources | nindent 16 }}
+          volumes:
+            - name: bridge-data
+              {{- if .Values.storage.persistence.enabled }}
+              persistentVolumeClaim:
+                claimName: {{ include "overleaf-git-bridge.fullname" . }}
+              {{- else }}
+              emptyDir: {}
+              {{- end }}
+            {{- if and (eq .Values.git.auth.mode "ssh") .Values.git.auth.ssh.existingSecret.name }}
+            - name: gitlab-ssh-key
+              secret:
+                secretName: {{ .Values.git.auth.ssh.existingSecret.name | quote }}
+                defaultMode: 0400
+            {{- end }}
+            {{- with .Values.extraVolumes }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          {{- with .Values.nodeSelector }}
+          nodeSelector:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.affinity }}
+          affinity:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.tolerations }}
+          tolerations:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}

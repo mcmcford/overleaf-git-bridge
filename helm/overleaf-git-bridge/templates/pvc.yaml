@@ -1,0 +1,17 @@
+{{- if .Values.storage.persistence.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "overleaf-git-bridge.fullname" . }}
+  labels:
+    {{- include "overleaf-git-bridge.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    {{- toYaml .Values.storage.persistence.accessModes | nindent 4 }}
+  resources:
+    requests:
+      storage: {{ .Values.storage.persistence.size | quote }}
+  {{- if .Values.storage.persistence.storageClassName }}
+  storageClassName: {{ .Values.storage.persistence.storageClassName | quote }}
+  {{- end }}
+{{- end }}

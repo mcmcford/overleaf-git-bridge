@@ -1,0 +1,105 @@
+image:
+  repository: overleaf-git-bridge
+  tag: latest
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+schedule: "*/15 * * * *"
+suspend: false
+concurrencyPolicy: Forbid
+successfulJobsHistoryLimit: 3
+failedJobsHistoryLimit: 1
+startingDeadlineSeconds: null
+backoffLimit: 1
+ttlSecondsAfterFinished: null
+
+podAnnotations: {}
+podLabels: {}
+
+podSecurityContext:
+  runAsUser: 1000
+  runAsGroup: 1000
+  fsGroup: 1000
+  fsGroupChangePolicy: OnRootMismatch
+
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+
+resources: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+bridge:
+  outputDir: "."
+  syncStateFile: ".sync-state.json"
+  assetStore: auto
+  filestoreRoot: ""
+  includeRaw: false
+  dryRun: false
+  extraArgs: []
+
+storage:
+  mountPath: /data
+  persistence:
+    enabled: false
+    size: 5Gi
+    storageClassName: ""
+    accessModes:
+      - ReadWriteOnce
+
+mongo:
+  host: mongo
+  port: 27017
+  username: root
+  authDb: admin
+  dbName: sharelatex
+  tls: false
+  connectTimeoutMs: 5000
+  existingPasswordSecret:
+    name: overleaf-mongo-creds
+    key: MONGO_ROOT_PASSWORD
+
+s3:
+  enabled: true
+  bucket: ""
+  prefix: ""
+  region: ""
+  endpointUrl: ""
+  verifySsl: true
+  caBundle: ""
+  existingSecret:
+    name: overleaf-s3-creds
+    accessKeyIdKey: access_key_id
+    secretAccessKeyKey: access_key
+
+git:
+  push: true
+  repoDir: /data/git-export
+  remoteName: origin
+  remoteUrl: ""
+  branch: main
+  commitName: Overleaf Git Bridge
+  commitEmail: overleaf-git-bridge@example.invalid
+  commitMessage: ""
+  auth:
+    mode: token
+    existingSecret:
+      name: ""
+      tokenKey: token
+      usernameKey: username
+    ssh:
+      existingSecret:
+        name: ""
+        key: id_rsa
+      mountPath: /etc/gitlab-ssh
+
+extraEnv: []
+extraVolumes: []
+extraVolumeMounts: []

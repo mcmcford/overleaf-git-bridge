@@ -47,7 +47,7 @@ These are the next likely milestones:
 
 - locate where Overleaf CE stores file contents in your deployment
 - detect deleted exported project folders and prune them during sync
-- package the sync process into a container for Kubernetes
+- deepen Kubernetes deployment support beyond the included starter Helm chart
 
 ## Quick Start
 
@@ -213,6 +213,90 @@ The test suite covers:
 - the Git remote/authentication check workflow
 - GitLab staging and push command flow for both SSH and HTTPS token auth
 - safety checks that prevent pushing exports from outside the configured git repo
+
+## Container Build
+
+Build the image locally with Docker:
+
+```powershell
+docker build -t overleaf-git-bridge:latest .
+```
+
+Or use the included PowerShell helper:
+
+```powershell
+.\scripts\build-image.ps1 -ImageName overleaf-git-bridge -Tag latest
+```
+
+The container image includes:
+
+- Python plus the bridge dependencies from `requirements.txt`
+- `git` for commit and push operations
+- `openssh-client` for SSH deploy-key based GitLab pushes
+
+The image entrypoint is:
+
+```text
+python /app/sync.py
+```
+
+## Helm Chart
+
+A starter Helm chart is included at `helm/overleaf-git-bridge`.
+
+The chart deploys the bridge as a Kubernetes `CronJob`, which fits the current sync model better than a long-running `Deployment` because `sync.py` performs one export run and then exits.
+
+### Default Secret Wiring
+
+The chart is set up to run in the same namespace as Overleaf and, by default, reads these existing secrets:
+
+- MongoDB password from secret `overleaf-mongo-creds`, key `MONGO_ROOT_PASSWORD`
+- S3 access key id from secret `overleaf-s3-creds`, key `access_key_id`
+- S3 secret access key from secret `overleaf-s3-creds`, key `access_key`
+
+You still need to set the non-secret connection details in Helm values, such as the MongoDB service hostname, S3 bucket name, and GitLab remote URL.
+
+### GitLab Auth Secret
+
+For HTTPS token auth, create or reuse an existing secret containing:
+
+- `username`: GitLab HTTP username such as `oauth2`, a project bot username, or a deploy token username
+- `token`: the GitLab access token or deploy token secret
+
+Example:
+
+```powershell
+kubectl create secret generic overleaf-git-bridge-gitlab `
+  --from-literal=username=oauth2 `
+  --from-literal=token=REPLACE_ME
+```
+
+### Example Install
+
+```powershell
+helm upgrade --install overleaf-git-bridge .\helm\overleaf-git-bridge `
+  --namespace overleaf `
+  --set image.repository=registry.example.com/overleaf-git-bridge `
+  --set image.tag=latest `
+  --set mongo.host=overleaf-mongo `
+  --set s3.bucket=overleaf-assets `
+  --set git.remoteUrl=https://gitlab.example.com/group/overleaf-export.git `
+  --set git.auth.mode=token `
+  --set git.auth.existingSecret.name=overleaf-git-bridge-gitlab
+```
+
+If you prefer SSH auth instead of HTTPS token auth, set `git.auth.mode=ssh`, provide `git.auth.ssh.existingSecret.name`, and store the private key in that secret under the configured key name.
+
+### Useful Helm Values
+
+Common settings in `helm/overleaf-git-bridge/values.yaml`:
+
+- `schedule`: Cron expression for how often to run the sync job
+- `bridge.extraArgs`: extra CLI flags such as `--project-id` or `--include-raw`
+- `storage.persistence.enabled`: switch from `emptyDir` to a PVC if you want persistent working storage
+- `mongo.*`: MongoDB host, username, database name, and auth database settings
+- `s3.*`: S3 bucket, endpoint, region, TLS, and existing secret mapping
+- `git.*`: GitLab remote, branch, commit identity, auth mode, and auth secret names
 
 ## Suggested Investigation Path
 

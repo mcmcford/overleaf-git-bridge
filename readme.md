@@ -276,13 +276,12 @@ kubectl create secret generic overleaf-git-bridge-gitlab `
 ```powershell
 helm upgrade --install overleaf-git-bridge .\helm\overleaf-git-bridge `
   --namespace overleaf `
-  --set image.repository=registry.example.com/overleaf-git-bridge `
-  --set image.tag=latest `
-  --set mongo.host=overleaf-mongo `
-  --set s3.bucket=overleaf-assets `
-  --set git.remoteUrl=https://gitlab.example.com/group/overleaf-export.git `
-  --set git.auth.mode=token `
-  --set git.auth.existingSecret.name=overleaf-git-bridge-gitlab
+  --set-string image.repository=harbor.core.tide/ctf/overleaf-git-bridge `
+  --set-string image.tag=0.1 `
+  --set-string s3.endpointUrl=https://s3.core.tide `
+  --set-string git.remoteUrl=git@gitlab.core.tide:morgan.mcford/overleaf-sync.git `
+  --set-string git.auth.mode=ssh `
+  --set-string git.auth.ssh.existingSecret.name=overleaf-git-bridge-gitlab
 ```
 
 If you prefer SSH auth instead of HTTPS token auth, set `git.auth.mode=ssh`, provide `git.auth.ssh.existingSecret.name`, and store the private key in that secret under the configured key name.

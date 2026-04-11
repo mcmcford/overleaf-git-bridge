@@ -356,12 +356,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Print what would change without writing files, committing, or pushing.",
     )
     parser.add_argument(
-        "--check-connection",
+        "--check-connection-mongo",
         action="store_true",
         help="Ping MongoDB and verify the projects collection can be read, then exit.",
     )
     parser.add_argument(
-        "--check-git",
+        "--check-connection-git",
         action="store_true",
         help="Validate GitLab authentication and remote reachability, then exit.",
     )

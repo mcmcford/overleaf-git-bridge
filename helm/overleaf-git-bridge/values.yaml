@@ -55,29 +55,29 @@ storage:
       - ReadWriteOnce
 
 mongo:
-  host: mongo
+  host: overleaf-mongo
   port: 27017
-  username: root
+  username: overleaf
   authDb: admin
   dbName: sharelatex
   tls: false
   connectTimeoutMs: 5000
   existingPasswordSecret:
-    name: overleaf-mongo-creds
+    name: overleaf-secrets
     key: MONGO_ROOT_PASSWORD
 
 s3:
   enabled: true
-  bucket: ""
+  bucket: overleaf-user-files;overleaf-template-files;overleaf-project-blobs
   prefix: ""
   region: ""
   endpointUrl: ""
-  verifySsl: true
+  verifySsl: false
   caBundle: ""
   existingSecret:
-    name: overleaf-s3-creds
-    accessKeyIdKey: access_key_id
-    secretAccessKeyKey: access_key
+    name: overleaf-git-bridge-s3
+    accessKeyIdKey: OVERLEAF_FILESTORE_S3_ACCESS_KEY_ID  
+    secretAccessKeyKey: OVERLEAF_FILESTORE_S3_SECRET_ACCESS_KEY
 
 git:
   push: true

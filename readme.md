@@ -55,6 +55,25 @@ Use one Git auth method:
 - HTTPS token: `GITLAB_ACCESS_TOKEN` and `GITLAB_HTTP_USERNAME`
 - SSH key: `GITLAB_SSH_KEY_PATH`
 
+### SSH key + Kubernetes secret notes
+
+If SSH auth fails with errors like `Load key ... error in libcrypto`, the private key is usually malformed in the secret (wrong newlines, wrong key type, or encrypted key).
+
+Recommended secret creation (preserves file contents exactly):
+
+```powershell
+kubectl create secret generic overleaf-git-bridge-ssh \
+  --from-file=id_rsa=/path/to/private_key
+```
+
+Then set the chart values:
+
+- `git.auth.mode=ssh`
+- `git.auth.ssh.existingSecret.name=overleaf-git-bridge-ssh`
+- `git.auth.ssh.existingSecret.key=id_rsa`
+
+Use an **unencrypted private key** with **LF** line endings.
+
 If your Overleaf instance stores uploaded files outside MongoDB, you may also need:
 
 - `OVERLEAF_FILESTORE_ROOT`

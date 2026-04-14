@@ -1809,6 +1809,55 @@ def build_git_http_auth_header(args: argparse.Namespace) -> str:
     return f"Authorization: Basic {encoded}"
 
 
+def validate_git_ssh_private_key(ssh_key_path: Path) -> None:
+    """Validate SSH private key basics so auth failures are easier to diagnose."""
+
+    if not ssh_key_path.is_file():
+        raise SystemExit(
+            f"SSH key file not found at {ssh_key_path}. "
+            "Set --git-ssh-key-path to a mounted private key file."
+        )
+
+    try:
+        key_text = ssh_key_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise SystemExit(f"Unable to read SSH key file {ssh_key_path}: {exc}") from exc
+
+    if "\r" in key_text:
+        raise SystemExit(
+            f"SSH key file {ssh_key_path} contains Windows (CRLF) line endings. "
+            "Use LF line endings when creating the Kubernetes secret."
+        )
+
+    key_text = key_text.strip()
+    if not key_text:
+        raise SystemExit(f"SSH key file {ssh_key_path} is empty.")
+
+    supported_headers = (
+        "-----BEGIN OPENSSH PRIVATE KEY-----",
+        "-----BEGIN RSA PRIVATE KEY-----",
+        "-----BEGIN EC PRIVATE KEY-----",
+        "-----BEGIN DSA PRIVATE KEY-----",
+        "-----BEGIN PRIVATE KEY-----",
+    )
+    if not key_text.startswith(supported_headers):
+        raise SystemExit(
+            f"SSH key file {ssh_key_path} does not look like a private key. "
+            "If this key is in a Kubernetes Secret, create it from a file (for example `kubectl create secret generic ... --from-file=id_rsa=...`) "
+            "so newlines are preserved."
+        )
+
+    encrypted_headers = (
+        "-----BEGIN ENCRYPTED PRIVATE KEY-----",
+        "Proc-Type: 4,ENCRYPTED",
+    )
+    if any(marker in key_text for marker in encrypted_headers):
+        raise SystemExit(
+            f"SSH key file {ssh_key_path} appears to be encrypted. "
+            "Use an unencrypted deploy key for non-interactive sync jobs."
+        )
+
+
 def build_git_env(args: argparse.Namespace) -> dict[str, str]:
     """Prepare a non-interactive git environment with author and auth settings."""
 
@@ -1831,6 +1880,7 @@ def build_git_env(args: argparse.Namespace) -> dict[str, str]:
 
     if args.git_ssh_key_path and not args.git_access_token:
         ssh_key_path = Path(args.git_ssh_key_path).expanduser().resolve()
+        validate_git_ssh_private_key(ssh_key_path)
         env["GIT_SSH_COMMAND"] = (
             f'ssh -i "{ssh_key_path}" -o IdentitiesOnly=yes '
             "-o StrictHostKeyChecking=accept-new"

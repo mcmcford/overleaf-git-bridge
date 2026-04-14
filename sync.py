@@ -2100,7 +2100,16 @@ def main() -> int:
 
     args = build_parser().parse_args()
 
-    if args.check_connection:
+    check_mongo = bool(
+        getattr(args, "check_connection_mongo", False)
+        or getattr(args, "check_connection", False)
+    )
+    check_git = bool(
+        getattr(args, "check_connection_git", False)
+        or getattr(args, "check_git", False)
+    )
+
+    if check_mongo:
         result = check_connection(args)
         print(f"connected to MongoDB database '{result.database_name}'")
         print(f"discovered {len(result.collections)} collections")
@@ -2110,7 +2119,7 @@ def main() -> int:
             print("projects collection is reachable but currently empty")
         return 0
 
-    if args.check_git:
+    if check_git:
         result = check_git_access(args)
         print(f"connected to Git remote '{result.remote_url}'")
         print(f"authentication mode: {result.auth_mode}")

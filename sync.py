@@ -1875,12 +1875,15 @@ def build_git_env(args: argparse.Namespace) -> dict[str, str]:
         }
     )
 
+    ssh_key_path: Path | None = None
+    if args.git_ssh_key_path:
+        ssh_key_path = Path(args.git_ssh_key_path).expanduser().resolve()
+        validate_git_ssh_private_key(ssh_key_path)
+
     if args.git_access_token:
         add_git_config_env(env, "http.extraHeader", build_git_http_auth_header(args))
 
-    if args.git_ssh_key_path and not args.git_access_token:
-        ssh_key_path = Path(args.git_ssh_key_path).expanduser().resolve()
-        validate_git_ssh_private_key(ssh_key_path)
+    if ssh_key_path is not None and not args.git_access_token:
         env["GIT_SSH_COMMAND"] = (
             f'ssh -i "{ssh_key_path}" -o IdentitiesOnly=yes '
             "-o StrictHostKeyChecking=accept-new"
